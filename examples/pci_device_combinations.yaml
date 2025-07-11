@@ -1,0 +1,26 @@
+---
+metadata:
+  version: '2.5'
+hosts:
+- name: sut
+  mng_ip_address: 10.0.0.1
+  instantiate: true
+  role: sut
+  network_interfaces:
+  - pci_device: 8086:1572:0000:001a       # pci_device has 2 possible formats: short@ vid:did, long@ vid:did:subvid:subdid
+    interface_index: 1                    # interface index, started from 0
+  - pci_device: 8086:1592                 # pci_device short@ vid:did format
+    random_interface: true                # determines random interface for provided pci_device
+  connections:
+  - ip_address: 10.0.0.1
+    connection_type: SSHConnection
+    connection_options:
+      username: foo
+      password: bar
+- name: client
+  mng_ip_address: 10.0.0.2
+  instantiate: true
+  role: client
+  network_interfaces:
+  - pci_device: 8086:1589
+    all_interfaces: true

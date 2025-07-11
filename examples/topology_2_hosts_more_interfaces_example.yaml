@@ -1,0 +1,63 @@
+---
+metadata:                           # mandatory section for config version
+  version: '2.5'
+hosts:                              # each of the element of the topology_configs file is optional, but once provided we validate whether mandatory params are provided
+- name: Catherine                   # mandatory
+  mng_ip_address: 10.1.2.3          # optional
+  mng_user: foo                     # optional
+  mng_password: bar                 # optional
+  instantiate: true                 # mandatory - determines whether Host object should be instantiated when using fixture
+  role: sut                         # mandatory
+  network_interfaces:               # optional
+  - interface_name: eth1            # 3 network interfaces provided using different identifiers
+  - pci_address: 0000:ff:ff.1       # determines interface by unique PCI Address
+  - pci_device: 8086:1572:0000:0001
+    interface_index: 0              # index of network interface, started from 0
+  connections:                      # optional
+  - ip_address: 10.10.10.11
+    connection_type: RPyCConnection
+  power_mng:
+    power_mng_type: Raritan
+    ip: 1.1.1.1
+    community_string: private
+- name: Catherine-Client
+  instantiate: true
+  role: client
+  network_interfaces:               # optional: list of 5 interfaces (different identifiers used)
+  - interface_name: eth1            # 5 network interfaces provided using different identifiers
+  - pci_device: 8086:1572:0000:0001
+    interface_index: 2
+    ips:
+      - value: 1.1.1.11
+        mask: 8
+    switch:
+    switch_port:
+    vlan:
+  - pci_device: 8086:1572
+    interface_index: 3
+  - pci_address: 0000:ff:ff.1
+    ips:
+      - value: 1.1.1.12
+        mask: 8
+    switch:
+    switch_port:
+    vlan:
+  - pci_device: 8086:1592
+    interface_index: 3
+    ips:
+      - value: 1.1.1.3
+        mask: 8
+    switch:
+    switch_port:
+    vlan:
+  connections:
+  - ip_address: 10.10.10.12
+    connection_type: RPyCConnection
+  power_mng:
+    power_mng_type: Ipmi
+    host: host
+    username: root
+    password: pass
+    connection:
+      ip_address: 10.01.00.00
+      connection_type: RPyCConnection

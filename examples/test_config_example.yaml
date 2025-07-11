@@ -1,0 +1,8 @@
+interval: 1.0
+count: 3
+direction: both
+connections:
+  - bidirectional: no
+    hosts: [xhc, client]
+  - bidirectional: yes
+    hosts: [xhc, imc]

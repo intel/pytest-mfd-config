@@ -1,0 +1,13 @@
+---
+metadata:
+  version: '2.5'
+hosts:
+- name: sut
+  mng_ip_address: 10.0.0.1
+  instantiate: true
+  role: sut
+  connections:
+  - connection_type: RPyCConnection
+    mac_address: aa:bb:cc:dd:ee:ff  # this will be translated into IP
+    osd_details:
+      base_url: osd-dispatcher.some.url.here.com

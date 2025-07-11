@@ -1,0 +1,33 @@
+---
+metadata:                           # mandatory
+  version: '2.5'
+switches:
+- name: Mellanox X
+  mng_ip_address: 10.10.10.10
+  mng_user: admin
+  mng_password: admin
+  instantiate: true
+  switch_type: Mellanox25G
+  device_type: mellanox_mlnxos
+  connection_type: SSHSwitchConnection
+hosts:
+  - name: sut
+    instantiate: true
+    role: sut
+    network_interfaces:
+      - pci_device: 8086:1572
+        instantiate: true
+        interface_index: 1
+        switch_name: Mellanox X
+        switch_port: Eth1/1
+    connections:
+      - ip_address: 10.10.10.11
+        connection_type: RPyCConnection
+  - name: client
+    instantiate: true
+    role: client
+    network_interfaces:
+      - interface_name: eth1
+    connections:
+      - ip_address: 10.10.10.12
+        connection_type: RPyCConnection

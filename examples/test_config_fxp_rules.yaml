@@ -1,0 +1,17 @@
+ip_ver: 4
+send_adapter_pair: xhc, client
+count: 10
+src_port:
+dst_port:
+send_negative_test: False
+reply_negative_test: False
+pcap_file: 0020-0x1a-01-MAC_IPV4_TCP.pcap
+cp_host_name: imc
+fxp_rules:
+  - fxp_rule:
+    value: opcode=1303 key=1A,00,[src_vsi],00,01,00,[send_src_mac],00,00,00,00,00,00,00,00,00,00,[send_src_ip],00,00,00,00,00,00,00,00,00,00,00,00,[send_dst_ip] act=set_vsi{slot=0 act_val=0 dst_pe=0 val_type=2} prof_id=14 cookie=1234
+  - fxp_rule:
+    value: opcode=1303 key=1A,00,00,00,00,00,[send_src_mac],00,00,00,00,00,00,00,00,00,00,[send_dst_ip],00,00,00,00,00,00,00,00,00,00,00,00,[send_src_ip] act=set_vsi{slot=0 act_val=[src_vsi] dst_pe=0 val_type=0} prof_id=32 cookie=1236
+connections:
+  - bidirectional: no
+    hosts: [xhc, client]

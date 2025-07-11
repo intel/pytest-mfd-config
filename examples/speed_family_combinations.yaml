@@ -1,0 +1,34 @@
+---
+metadata:
+  version: '2.5'
+hosts:
+- name: sut
+  mng_ip_address: 10.0.0.1
+  instantiate: true
+  role: sut
+  network_interfaces:
+  - speed: 100g                          # mfd-const keys for SPEED_IDS dictionary
+    interface_index: 0                   # determines first interface from list of all interfaces for 100G interfaces
+  - family: FVL
+    random_interface: true
+  connections:
+  - ip_address: 10.0.0.1
+    connection_type: RPyCConnection      # determines type of connection from mfd-connect
+- name: client_1
+  mng_ip_address: 10.0.0.2
+  instantiate: true
+  role: client
+  network_interfaces:
+  - family: FVL
+    interface_index: 0                     # determines first interface from list of all interfaces for FVL family
+- name: client_2
+  mng_ip_address: 10.0.0.3
+  instantiate: true
+  role: client
+  network_interfaces:
+  - speed:  40G                             # mfd-const keys for SPEED_IDS dictionary
+    family: NNT                             # mfd-const keys for DEVICE_IDS dictionary
+    all_interfaces: true                    # all_interfaces=true is default for mfd-network-adapter when random/all_interfaces were not provided
+  connections:
+  - ip_address: 10.0.0.3
+    connection_type: RPyCConnection

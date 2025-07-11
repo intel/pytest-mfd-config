@@ -1,0 +1,25 @@
+---
+metadata:
+  version: '2.5'
+hosts:                              # each of the element of the topology_configs file is optional, but once provided we validate whether mandatory params are provided
+- name: Maggie                  # mandatory
+  machine_type: ipu
+  ipu_host_type: imc
+  instantiate: false                # mandatory - determines whether Host object should be instantiated when using fixture
+  role: sut                         # mandatory
+  network_interfaces:               # optional
+  - pci_address: 0000:ff:ff.1a
+- name: Catherine                   # mandatory
+  machine_type: ipu
+  ipu_host_type: acc
+  instantiate: false                # mandatory - determines whether Host object should be instantiated when using fixture
+  role: sut                         # mandatory
+  network_interfaces:               # optional
+  - pci_address: 0000:ff:ff.1a
+- name: Donkey                   # mandatory
+  machine_type: ipu
+  ipu_host_type: xhc
+  instantiate: false                # mandatory - determines whether Host object should be instantiated when using fixture
+  role: client                         # mandatory
+  network_interfaces:               # optional
+  - interface_name: eth1

@@ -1,0 +1,102 @@
+---
+metadata:
+  version: '2.5'
+switches:
+- name: Dell 123456
+  mng_ip_address: 10.1.2.4
+  mng_user: foo
+  mng_password: bar
+  instantiate: true
+  switch_type: DellOS9_7000
+  device_type: Dell
+  connection_type: SSHSwitchConnection
+  ssh_key_file:
+  use_ssh_key:
+  enable_password:
+  auth_timeout:
+  switch_ports:
+  vlans:
+- name: Mellanox_ABC
+  mng_ip_address: 10.1.2.3
+  mng_user: foo
+  mng_password: bar
+  instantiate: true
+  switch_type: Mellanox25G
+  device_type: Mellanox
+  connection_type: SSHSwitchConnection
+  ssh_key_file:
+  use_ssh_key:
+  enable_password:
+  auth_timeout:
+  switch_ports:
+  vlans:
+services:
+- type: nsx
+  label: Version_7
+  username: foo
+  password: bar
+  ip_address: 1.2.3.4
+- type: nsx
+  label: Version_8
+  username: foo
+  password: bar
+  ip_address: 1.2.3.5
+hosts:
+- name: Zen
+  instantiate: true
+  role: sut
+  network_interfaces:
+  - interface_name: eth2
+    ips:
+    - value: 1.2.1.1
+      mask: 8
+    switch_name: Dell 123456
+    switch_port: Eth1/1
+    vlan: '100'
+  connections:
+  - ip_address: 10.10.10.10
+    connection_type: RPyCConnection
+    connection_options:
+      port: 18813
+  power_mng:
+    power_mng_type: Ipmi
+    host: host
+    username: user
+    password: pass
+    connection:
+      ip_address: 10.01.00.00
+      connection_type: RPyCConnection
+- name: Ken
+  instantiate: true
+  role: client
+  network_interfaces:
+  - interface_name: eth2
+    ips:
+    - value: 1.1.1.1
+      mask: 8
+    switch:
+    switch_port:
+    vlan:
+  - interface_name: eth3
+    ips:
+    - value: 1.1.1.1
+      mask: 8
+    switch:
+    switch_port:
+    vlan:
+  - interface_name: eth4
+    ips:
+    switch:
+    switch_port:
+    vlan:
+  connections:
+  - ip_address: 10.10.10.10
+    connection_type: RPyCConnection
+    connection_options:
+      port: 18814
+  power_mng:
+    power_mng_type: Raritan
+    ip: 1.1.1.1
+    community_string: private
+vms:
+containers:
