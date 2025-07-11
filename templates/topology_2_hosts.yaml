@@ -1,0 +1,30 @@
+---
+metadata:
+  version: '2.5'
+hosts:
+- name: sut
+  mng_ip_address: {{ sut_mng_ip_address }}
+  instantiate: true
+  role: sut
+  network_interfaces:
+  - pci_device: {{ client_adapter_id } }
+    interface_index: {{ sut_adapter_index }}
+    ips:
+      - value: 1.1.1.1
+        mask: 8
+  connections:
+  - ip_address: {{ sut_mng_ip_address }}
+    connection_type: RPyCConnection
+- name: client
+  mng_ip_address: {{ client_mng_ip_address }}
+  instantiate: true
+  role: client
+  network_interfaces:
+  - pci_device: {{ client_adapter_id }}
+    interface_index: {{ client_adapter_index }}
+    ips:
+      - value: 1.2.1.1
+        mask: 8
+  connections:
+  - ip_address: {{ client_mng_ip_address }}
+    connection_type: RPyCConnection

@@ -1,0 +1,47 @@
+---
+metadata:
+  version: '2.5'
+
+hosts:
+- name: imc
+  instantiate: false
+  role: sut
+  mng_ip_address: "100.0.0.100"
+  connections:
+  - ip_address: "10.10.10.10"
+    connection_type: SSHConnection
+    connection_id: 2
+  - connection_type: SerialConnection
+    relative_connection_id: 2
+    connection_options:
+      username: "root"
+      password: ""
+      is_veloce: True
+      execution_retries: 2
+      with_redirection: True
+      telnet_port: 1247
+      serial_device: "/dev/ttyUSB2"
+      baudrate: 460800
+
+- name: acc
+  instantiate: false
+  role: sut
+  mng_ip_address: "200.1.1.3"
+  connections:
+  - ip_address: 200.1.1.3
+    connection_id: 1
+    connection_type: SSHConnection
+    connection_options:
+      username: "root"
+      password: ""
+  - relative_connection_id: 1
+    connection_type: SerialConnection
+    connection_options:
+      username: "root"
+      password: ""
+      is_veloce: True
+      execution_retries: 2
+      with_redirection: True
+      telnet_port: 1248
+      serial_device: "/dev/ttyUSB0"
+      baudrate: 115200

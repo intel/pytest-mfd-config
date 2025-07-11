@@ -1,0 +1,17 @@
+# erdantic  # might be used for drawing ERD diagrams based on pydantic models, need to install graphviz first: https://graphviz.org/download/
+pydantic >= 2.0, < 3
+pytest >= 7.2.1, < 9
+ruamel.yaml
+packaging >= 23.1
+
+mfd-common-libs >= 1.11.0
+mfd-model[config] >= 0.9.0, < 1
+mfd-connect >= 7.12.0
+mfd-typing >= 1.23.0
+mfd-switchmanagement >= 2.18.0, < 3
+mfd-powermanagement >= 1.12.0, < 2
+mfd-host >= 2.0.0, < 3
+mfd-osd-control >= 0.9.0, < 1
+
+jinja2_workarounds
+cryptography

@@ -1,0 +1,40 @@
+---
+metadata:
+  version: '2.5'
+hosts:
+- name: sut
+  mng_ip_address: 10.0.0.1
+  instantiate: true
+  role: sut
+  network_interfaces:
+  - pci_device: 8086:1572
+    interface_index: 0
+    ips:
+      - value: 1.1.1.1
+        mask: 8
+  connections:
+  - ip_address: 10.0.0.1
+    connection_type: SSHConnection       # type of mfd-connect connection
+    connection_options:
+      username: user                     # credentials for SSH connection
+      password: abc                    # acceptable are all input parameters for this type od connection
+      port: 22                           # port detail for mfd-connect.SSHConnection
+  - ip_address: 10.0.0.1
+    connection_type: RPyCConnection      # type of mfd-connect connection
+- name: client
+  mng_ip_address: 10.0.0.2
+  instantiate: true
+  role: client
+  network_interfaces:
+  - pci_device: 8086:1572
+    interface_index: 0
+    ips:
+      - value: 1.2.1.1
+        mask: 8
+  connections:
+  - ip_address: 10.0.0.1
+    connection_type: SSHConnection       # type of mfd-connect connection
+    connection_options:
+      username: user                     # credentials for SSH connection
+      password: abc                    # acceptable are all input parameters for this type od connection
+      port: 22

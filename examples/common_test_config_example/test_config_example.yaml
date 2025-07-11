@@ -1,0 +1,16 @@
+connections:
+  - bidirectional: no
+    hosts: [xhc, client]
+  - bidirectional: yes
+    hosts: [xhc, imc]
+{% include "test_config_common.yaml" %}
+
+# outcome, when you'll pass test_config_example.yaml to the test:
+#connections:
+#  - bidirectional: no
+#    hosts: [xhc, client]
+#  - bidirectional: yes
+#    hosts: [xhc, imc]
+#interval: 1.0
+#count: 3
+#direction: both
