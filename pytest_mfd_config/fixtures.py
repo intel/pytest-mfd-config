@@ -10,6 +10,7 @@ from typing import Any, Optional, List, TYPE_CHECKING, Dict, Tuple
 import pytest  # noqa: F401
 from _pytest.fixtures import FixtureRequest
 from cryptography.fernet import Fernet
+from pydantic import SecretStr
 from mfd_common_libs import log_levels, add_logging_level
 from mfd_host import Host
 
@@ -290,6 +291,7 @@ def create_host_from_model(host_model: "HostModel", cli_client: Optional["CliCli
     when "instantiate" flag is set to False.
     :return: Host object
     """
+    host_model = _decrypt_host_password(host_model)
     _connections = create_host_connections_from_model(host_model)
 
     connections = Connections(_connections=_connections)
@@ -538,6 +540,66 @@ def _get_secrets(test_config: dict) -> dict[str, SecretModel]:
         return {}
 
 
+def _has_secret_password_fields(connections: Any) -> bool:
+    """
+    Check whether any connection contains secret password fields.
+
+    :param connections: List of connection objects
+    :return: True if secret password fields are present, False otherwise
+    """
+    for connection in connections:
+        if connection.connection_options:
+            for key, value in connection.connection_options.items():
+                if "password" in key.lower() and isinstance(value, SecretStr):
+                    logger.log(
+                        level=log_levels.MODULE_DEBUG,
+                        msg="Secret password field found in connection_options, decryption may be needed.",
+                    )
+                    return True
+    return False
+
+
+def _decrypt_host_password(host_model: "HostModel") -> "HostModel":
+    """
+    Decrypt password fields in connection_options for all connections of a HostModel.
+
+    Any field containing 'password' in connection_options that is a Fernet-encrypted value
+    will be decrypted and replaced with a new SecretStr containing the plaintext.
+
+    :param host_model: HostModel object
+    :return: HostModel with decrypted password fields in connection_options
+    :raises PyTestMFDConfigException: If AMBER_ENCRYPTION_KEY is not set in environment variables
+    """
+    if not host_model.connections:
+        logger.log(level=log_levels.MODULE_DEBUG, msg=f"No connections for host: {host_model.name}, skipping.")
+        return host_model
+
+    if not _has_secret_password_fields(host_model.connections):
+        logger.log(level=log_levels.MODULE_DEBUG, msg=f"No decryption needed for host: {host_model.name}.")
+        return host_model
+
+    cipher = _get_encryption_obj()
+    updated_connections = []
+    for connection in host_model.connections:
+        if not connection.connection_options:
+            updated_connections.append(connection)
+            continue
+        new_options = {}
+        for key, value in connection.connection_options.items():
+            if "password" in key.lower() and isinstance(value, SecretStr):
+                logger.log(
+                    level=log_levels.MODULE_DEBUG,
+                    msg=f"Decrypting pwd in connection_options for host: {host_model.name}",
+                )
+                encrypted = value.get_secret_value().encode("utf-8")
+                decrypted = cipher.decrypt(encrypted).decode()
+                new_options[key] = SecretStr(decrypted)
+            else:
+                new_options[key] = value
+        updated_connections.append(connection.model_copy(update={"connection_options": new_options}))
+    return host_model.model_copy(update={"connections": updated_connections})
+
+
 def _get_encryption_obj() -> Fernet:
     """
     Get encryption object.
@@ -548,7 +610,7 @@ def _get_encryption_obj() -> Fernet:
     Fernet is an implementation of symmetric (also known as “secret key”) authenticated cryptography.
     :return: Fernet object
     """
-    encryption_key = os.environ.get("AMBER_ENCRYPTION_KEY")
+    encryption_key = os.environ.get("AMBER_ENCRYPTION_KEY").encode("utf-8")
     if not encryption_key:
         raise PyTestMFDConfigException("AMBER_ENCRYPTION_KEY environment variable is not set.")
     return Fernet(encryption_key)
