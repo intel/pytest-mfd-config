@@ -81,6 +81,15 @@ Fixture `hosts` delivers dictionary with `name` of host as key and `Host` object
    params needed for its `init` you can pass in topology - please check [MachineModel](#machinemodel) for more details.
 
 For more info please check [mfd-host](https://github.com/intel/mfd-host) repository.
+
+#### Host connection password decryption
+
+Password fields (e.g. `password` in `connection_options`) for Host connections can be stored in encrypted form (Fernet). During Host object creation, all such fields are automatically decrypted using the key from the `AMBER_ENCRYPTION_KEY` environment variable. This ensures that passwords are not stored in plain text in configuration files, and are only available in decrypted form at runtime. `PyTestMFDConfigException` will raise if `AMBER_ENCRYPTION_KEY` is missing.
+
+This mechanism increases security and is fully transparent for test code using Host objects.
+Example of usage: `examples\topology_host_config_with_secrets.yaml` - this is an example of using secrets for host connections, where the Jinja variable `secrets_password` is substituted by the mechanism with the real secret value.
+
+
 #### Host methods:
 - `refresh_network_interfaces(self) -> None` - Create new NetworkInterface objects and overwrite current ones.
 

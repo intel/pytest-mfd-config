@@ -6,6 +6,8 @@ import logging
 import os
 import re
 
+from pydantic import SecretStr
+
 import pytest
 from cryptography.fernet import Fernet
 from mfd_common_libs import log_levels
@@ -22,7 +24,10 @@ from pytest_mfd_config.fixtures import (
     _get_secrets,
     _get_encryption_obj,
     _decrypt_secrets,
+    _decrypt_host_password,
+    create_host_from_model,
 )
+from mfd_host import Host
 from pytest_mfd_config.models.test_config import HostPairConnectionModel, SecretModel
 from pytest_mfd_config.models.topology import ConnectionModel
 
@@ -250,3 +255,157 @@ class TestFixtures:
         secrets = _decrypt_secrets(secrets_dict)
         assert secrets == {"secret1": SecretModel(name="secret1", value="decrypted_value1")}
         mock_cipher.decrypt.assert_called_once_with(b"gAAAAABf2...")
+
+    def test__decrypt_host_password_no_connections(self, mocker):
+        host_model = mocker.Mock(name="host_model")
+        host_model.name = "sut-1"
+        host_model.connections = []
+
+        get_encryption_obj = mocker.patch("pytest_mfd_config.fixtures._get_encryption_obj")
+
+        result = _decrypt_host_password(host_model)
+
+        assert result is host_model
+        get_encryption_obj.assert_not_called()
+
+    def test__decrypt_host_password_no_decryption_needed(self, mocker):
+        connection = mocker.Mock(name="connection")
+        connection.connection_options = {"username": "admin", "port": 22}
+
+        host_model = mocker.Mock(name="host_model")
+        host_model.name = "sut-1"
+        host_model.connections = [connection]
+
+        get_encryption_obj = mocker.patch("pytest_mfd_config.fixtures._get_encryption_obj")
+
+        result = _decrypt_host_password(host_model)
+
+        assert result is host_model
+        get_encryption_obj.assert_not_called()
+
+    def test__decrypt_host_password_connection_without_options(self, mocker):
+        conn_with_password = mocker.Mock(name="connection_with_password")
+        conn_with_password.connection_options = {"password": SecretStr("encrypted_pwd")}
+
+        conn_without_options = mocker.Mock(name="connection_without_options")
+        conn_without_options.connection_options = None
+
+        host_model = mocker.Mock(name="host_model")
+        host_model.name = "sut-1"
+        host_model.connections = [conn_with_password, conn_without_options]
+
+        mock_cipher = mocker.Mock()
+        mock_cipher.decrypt.return_value = b"decrypted_pwd"
+        mocker.patch("pytest_mfd_config.fixtures._get_encryption_obj", return_value=mock_cipher)
+
+        conn_with_password.model_copy = mocker.Mock(return_value=conn_with_password)
+        host_model.model_copy = mocker.Mock(return_value=host_model)
+
+        result = _decrypt_host_password(host_model)
+
+        # Verify connection without options is kept as-is (not copied)
+        conn_with_password.model_copy.assert_called_once()
+        # Verify host was copied with updated connections
+        host_model.model_copy.assert_called_once()
+        assert result is host_model
+
+    def test__decrypt_host_password_decrypts_password_fields(self, mocker):
+        class DummyConnection:
+            def __init__(self, options):
+                self.connection_options = options
+
+            def model_copy(self, update):
+                return DummyConnection(update["connection_options"])
+
+        class DummyHost:
+            def __init__(self, name, connections):
+                self.name = name
+                self.connections = connections
+
+            def model_copy(self, update):
+                return DummyHost(self.name, update["connections"])
+
+        host_model = DummyHost(
+            name="sut-1",
+            connections=[
+                DummyConnection(
+                    {
+                        "password": SecretStr("encrypted_password"),
+                        "jump_host_password": SecretStr("encrypted_jump_password"),
+                        "timeout": 30,
+                    }
+                )
+            ],
+        )
+
+        mock_cipher = mocker.Mock()
+        mock_cipher.decrypt.side_effect = [b"plain_password", b"plain_jump_password"]
+        mocker.patch("pytest_mfd_config.fixtures._get_encryption_obj", return_value=mock_cipher)
+
+        result = _decrypt_host_password(host_model)
+
+        decrypted_options = result.connections[0].connection_options
+        assert decrypted_options["password"].get_secret_value() == "plain_password"
+        assert decrypted_options["jump_host_password"].get_secret_value() == "plain_jump_password"
+        assert decrypted_options["timeout"] == 30
+        assert mock_cipher.decrypt.call_count == 2
+
+    def test_create_host_from_model_basic(self, mocker):
+        host_model = mocker.Mock(name="host_model")
+        host_model.name = "test_host"
+        host_model.connections = []
+        host_model.power_mng = None
+        host_model.network_interfaces = None
+
+        mock_connection = mocker.Mock()
+        mocker.patch("pytest_mfd_config.fixtures._decrypt_host_password", return_value=host_model)
+        mocker.patch("pytest_mfd_config.fixtures.create_host_connections_from_model", return_value=[mock_connection])
+        mocker.patch("pytest_mfd_config.fixtures.Connections")
+
+        mock_host = mocker.Mock(spec=Host)
+        mocker.patch("pytest_mfd_config.fixtures.Host", return_value=mock_host)
+
+        result = create_host_from_model(host_model)
+
+        assert result is mock_host
+
+    def test_create_host_from_model_with_power_mng(self, mocker):
+        host_model = mocker.Mock(name="host_model")
+        host_model.name = "test_host"
+        host_model.connections = []
+        host_model.power_mng = mocker.Mock()
+        host_model.network_interfaces = None
+
+        mock_connection = mocker.Mock()
+        mocker.patch("pytest_mfd_config.fixtures._decrypt_host_password", return_value=host_model)
+        mocker.patch("pytest_mfd_config.fixtures.create_host_connections_from_model", return_value=[mock_connection])
+        mocker.patch("pytest_mfd_config.fixtures.Connections")
+        mock_power_mng = mocker.Mock()
+        mocker.patch("pytest_mfd_config.fixtures.create_power_mng_from_model", return_value=mock_power_mng)
+
+        mock_host = mocker.Mock(spec=Host)
+        mocker.patch("pytest_mfd_config.fixtures.Host", return_value=mock_host)
+
+        result = create_host_from_model(host_model)
+
+        assert result is mock_host
+
+    def test_create_host_from_model_with_network_interfaces(self, mocker):
+        host_model = mocker.Mock(name="host_model")
+        host_model.name = "test_host"
+        host_model.connections = []
+        host_model.power_mng = None
+        host_model.network_interfaces = [mocker.Mock()]
+
+        mock_connection = mocker.Mock()
+        mocker.patch("pytest_mfd_config.fixtures._decrypt_host_password", return_value=host_model)
+        mocker.patch("pytest_mfd_config.fixtures.create_host_connections_from_model", return_value=[mock_connection])
+        mocker.patch("pytest_mfd_config.fixtures.Connections")
+
+        mock_host = mocker.Mock(spec=Host)
+        mocker.patch("pytest_mfd_config.fixtures.Host", return_value=mock_host)
+
+        result = create_host_from_model(host_model)
+
+        mock_host.refresh_network_interfaces.assert_called_once()
+        assert result is mock_host
