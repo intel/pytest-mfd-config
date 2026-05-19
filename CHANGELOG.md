@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v3.26.1 (2026-05-19)
+
+### Bug Fixes
+
+- Temporarily disable host password decryption in create_host_from_model
+  ([`ca9262e`](https://github.com/intel/pytest-mfd-config/commit/ca9262e91fe1db53e4b3e7ecc793cdebe3fdc159))
+
+### Chores
+
+- Fix of pyproject.toml after CI operations
+  ([`13ce93b`](https://github.com/intel/pytest-mfd-config/commit/13ce93b0870d1216eae7e063e5b49ca55515ac31))
+
+
 ## v3.26.0 (2026-05-19)
 
 ### Chores
