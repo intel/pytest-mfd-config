@@ -1,5 +1,5 @@
 # erdantic  # might be used for drawing ERD diagrams based on pydantic models, need to install graphviz first: https://graphviz.org/download/
-pydantic >= 2.0, < 3
+pydantic >= 2.13.4, < 3
 pytest >= 7.2.1, < 9
 ruamel.yaml
 packaging >= 23.1
