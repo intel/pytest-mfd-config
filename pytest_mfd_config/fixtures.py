@@ -291,7 +291,7 @@ def create_host_from_model(host_model: "HostModel", cli_client: Optional["CliCli
     when "instantiate" flag is set to False.
     :return: Host object
     """
-    host_model = _decrypt_host_password(host_model)
+    # host_model = _decrypt_host_password(host_model) # todo fix decryption of host passwords
     _connections = create_host_connections_from_model(host_model)
 
     connections = Connections(_connections=_connections)
@@ -550,6 +550,8 @@ def _has_secret_password_fields(connections: Any) -> bool:
     for connection in connections:
         if connection.connection_options:
             for key, value in connection.connection_options.items():
+                # todo, password is always SecretStr from model point of view
+                # even it's not encrypted
                 if "password" in key.lower() and isinstance(value, SecretStr):
                     logger.log(
                         level=log_levels.MODULE_DEBUG,
