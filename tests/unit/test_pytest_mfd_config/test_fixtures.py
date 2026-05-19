@@ -9,7 +9,7 @@ import re
 from pydantic import SecretStr
 
 import pytest
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from mfd_common_libs import log_levels
 from mfd_connect import AsyncConnection
 from ruamel.yaml import YAML
@@ -268,7 +268,7 @@ class TestFixtures:
         assert result is host_model
         get_encryption_obj.assert_not_called()
 
-    def test__decrypt_host_password_no_decryption_needed(self, mocker):
+    def test__decrypt_host_password_no_decryption_needed_no_key(self, mocker):
         connection = mocker.Mock(name="connection")
         connection.connection_options = {"username": "admin", "port": 22}
 
@@ -276,12 +276,30 @@ class TestFixtures:
         host_model.name = "sut-1"
         host_model.connections = [connection]
 
-        get_encryption_obj = mocker.patch("pytest_mfd_config.fixtures._get_encryption_obj")
-
-        result = _decrypt_host_password(host_model)
+        with mocker.patch("pytest_mfd_config.fixtures._get_encryption_obj", side_effect=PyTestMFDConfigException):
+            result = _decrypt_host_password(host_model)
 
         assert result is host_model
-        get_encryption_obj.assert_not_called()
+
+    def test__decrypt_host_password_keep_secretstr_as_is(self, mocker, caplog):
+        caplog.set_level(level=log_levels.MODULE_DEBUG)
+        connection = mocker.Mock(name="connection")
+        connection.connection_options = {"username": "admin", "port": 22, "password": SecretStr("encrypted_pwd")}
+
+        host_model = mocker.Mock(name="host_model")
+        host_model.name = "sut-1"
+        host_model.connections = [connection]
+        mock_cipher = mocker.Mock()
+        mock_cipher.decrypt.side_effect = InvalidToken
+        mocker.patch("pytest_mfd_config.fixtures._get_encryption_obj", return_value=mock_cipher)
+
+        result = _decrypt_host_password(host_model)
+        log_message = "Value for 'password' is not a valid Fernet token. Keeping original value."
+        assert log_message in caplog.text
+
+        assert result is host_model.model_copy.return_value
+        host_model.model_copy.assert_called_once()
+        mock_cipher.decrypt.assert_called_once_with(b"encrypted_pwd")
 
     def test__decrypt_host_password_connection_without_options(self, mocker):
         conn_with_password = mocker.Mock(name="connection_with_password")
@@ -294,6 +312,7 @@ class TestFixtures:
         host_model.name = "sut-1"
         host_model.connections = [conn_with_password, conn_without_options]
 
+        mocker.patch.dict(os.environ, {"AMBER_ENCRYPTION_KEY": "GWXohRLNALUC5zzulG6cZtPtxBKC7VA0mo-ING-_G1c="})
         mock_cipher = mocker.Mock()
         mock_cipher.decrypt.return_value = b"decrypted_pwd"
         mocker.patch("pytest_mfd_config.fixtures._get_encryption_obj", return_value=mock_cipher)
@@ -338,6 +357,7 @@ class TestFixtures:
             ],
         )
 
+        mocker.patch.dict(os.environ, {"AMBER_ENCRYPTION_KEY": "GWXohRLNALUC5zzulG6cZtPtxBKC7VA0mo-ING-_G1c="})
         mock_cipher = mocker.Mock()
         mock_cipher.decrypt.side_effect = [b"plain_password", b"plain_jump_password"]
         mocker.patch("pytest_mfd_config.fixtures._get_encryption_obj", return_value=mock_cipher)
@@ -349,6 +369,39 @@ class TestFixtures:
         assert decrypted_options["jump_host_password"].get_secret_value() == "plain_jump_password"
         assert decrypted_options["timeout"] == 30
         assert mock_cipher.decrypt.call_count == 2
+
+    def test__decrypt_host_password_invalid_token_keeps_original(self, mocker):
+        class DummyConnection:
+            def __init__(self, options):
+                self.connection_options = options
+
+            def model_copy(self, update):
+                return DummyConnection(update["connection_options"])
+
+        class DummyHost:
+            def __init__(self, name, connections):
+                self.name = name
+                self.connections = connections
+
+            def model_copy(self, update):
+                return DummyHost(self.name, update["connections"])
+
+        host_model = DummyHost(
+            name="sut-1",
+            connections=[DummyConnection({"password": SecretStr("plain_password"), "timeout": 30})],
+        )
+
+        mocker.patch.dict(os.environ, {"AMBER_ENCRYPTION_KEY": "GWXohRLNALUC5zzulG6cZtPtxBKC7VA0mo-ING-_G1c="})
+        mock_cipher = mocker.Mock()
+        mock_cipher.decrypt.side_effect = InvalidToken
+        mocker.patch("pytest_mfd_config.fixtures._get_encryption_obj", return_value=mock_cipher)
+
+        result = _decrypt_host_password(host_model)
+
+        decrypted_options = result.connections[0].connection_options
+        assert decrypted_options["password"].get_secret_value() == "plain_password"
+        assert decrypted_options["timeout"] == 30
+        mock_cipher.decrypt.assert_called_once_with(b"plain_password")
 
     def test_create_host_from_model_basic(self, mocker):
         host_model = mocker.Mock(name="host_model")
