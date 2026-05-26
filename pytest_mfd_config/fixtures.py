@@ -115,6 +115,8 @@ def create_switch_from_model(switch_model: SwitchModel) -> "Switch":
     """
     logger.log(level=log_levels.MODULE_DEBUG, msg="Preparing Switch object based on model.")
 
+    switch_model = _decrypt_switch_password(switch_model)
+
     import mfd_switchmanagement  # noqa: F401
     from mfd_switchmanagement import SSHSwitchConnection, CiscoAPIConnection
 
@@ -215,11 +217,7 @@ def _establish_connection(
     if connection_model.ip_address:
         options["ip"] = str(connection_model.ip_address)
     elif connection_model.mac_address:
-        from mfd_osd_control import OsdController
-
-        osd_details: Dict[str, Any] = connection_model.osd_details.dict()
-        osd_details["password"] = osd_details["password"].get_secret_value() if osd_details.get("password") else None
-        osd_controller = OsdController(**osd_details)
+        osd_controller = create_osd_controller_from_model(connection_model.osd_details)
 
         if not osd_controller.does_host_exist(connection_model.mac_address):
             raise PyTestMFDConfigException(f"Passed OSD Host does not exist! {connection_model.osd_details}")
@@ -265,7 +263,10 @@ def create_power_mng_from_model(power_mng_model: PowerMngModel) -> "PowerManagem
     """
     logger.log(level=log_levels.MODULE_DEBUG, msg="Preparing power management object.")
 
+    power_mng_model = _decrypt_model_password(power_mng_model, field_name="password")
+
     import mfd_powermanagement
+    import mfd_powermanagement.pdu
 
     power_mng_class = getattr(mfd_powermanagement, power_mng_model.power_mng_type)
 
@@ -278,6 +279,27 @@ def create_power_mng_from_model(power_mng_model: PowerMngModel) -> "PowerManagem
     if power_mng_model.connection is not None and not issubclass(power_mng_class, mfd_powermanagement.pdu.PDU):
         power_mng_kwargs["connection"] = get_connection_object(power_mng_model.connection)
     return power_mng_class(**power_mng_kwargs)
+
+
+def create_osd_controller_from_model(osd_controller_model: Any) -> Any:
+    """
+    Create OSD Controller object based on data from model.
+
+    :param osd_controller_model: OSD Controller model object.
+    :return: OSD Controller object.
+    """
+    logger.log(level=log_levels.MODULE_DEBUG, msg="Preparing OSD Controller object.")
+
+    from mfd_osd_control import OsdController
+
+    osd_controller_model = _decrypt_model_password(osd_controller_model, field_name="password")
+    osd_controller_details = osd_controller_model.dict()
+
+    password = osd_controller_details.get("password")
+    if isinstance(password, SecretStr):
+        osd_controller_details["password"] = password.get_secret_value()
+
+    return OsdController(**osd_controller_details)
 
 
 def create_host_from_model(host_model: "HostModel", cli_client: Optional["CliClient"] = None) -> Host:
@@ -330,6 +352,167 @@ def hosts(topology: TopologyModel) -> Dict[str, Host]:
             host = create_host_from_model(host_model=host_model)
             hosts_dict[host.name] = host
     return hosts_dict
+
+
+def _try_decrypt_secret(value: SecretStr | str | None, cipher: "Fernet") -> SecretStr:
+    """
+    Try to decrypt a Fernet-encrypted SecretStr.
+
+    Returns a new SecretStr with the plaintext on success,
+    or the original value unchanged if it was not encrypted.
+
+    :param value: SecretStr, str, or None to decrypt
+    :param cipher: Fernet cipher object
+    :return: Decrypted SecretStr or original value unchanged
+    """
+    try:
+        decrypted = cipher.decrypt(value.get_secret_value().encode("utf-8")).decode()
+        return SecretStr(decrypted)
+    except InvalidToken:
+        logger.log(
+            level=log_levels.MODULE_DEBUG,
+            msg="Value for 'password' is not a valid Fernet token. Keeping original value.",
+        )
+        return value
+    except AttributeError:
+        return value
+
+
+def _has_secret_switch_password_fields(switch_model: SwitchModel) -> bool:
+    """Check whether switch has any SecretStr password field to decrypt.
+
+    :param switch_model: SwitchModel object
+    :return: True if at least one password field is a SecretStr, False otherwise
+    """
+    return isinstance(getattr(switch_model, "mng_password", None), SecretStr) or isinstance(
+        getattr(switch_model, "enable_password", None), SecretStr
+    )
+
+
+def _decrypt_switch_password(switch_model: SwitchModel) -> SwitchModel:
+    """
+    Decrypt password fields in a SwitchModel.
+
+    If `mng_password` or `enable_password` is a Fernet-encrypted value,
+    it will be decrypted and replaced with a new SecretStr containing the plaintext.
+
+    :param switch_model: SwitchModel object
+    :return: SwitchModel with decrypted password fields
+    """
+    if not _has_secret_switch_password_fields(switch_model):
+        return switch_model
+
+    try:
+        cipher = _get_encryption_obj()
+    except PyTestMFDConfigException as info:
+        logger.log(level=log_levels.MODULE_DEBUG, msg=info)
+        return switch_model
+
+    updates = {}
+    for field in ("mng_password", "enable_password"):
+        value = getattr(switch_model, field, None)
+        decrypted = _try_decrypt_secret(value, cipher)
+        if decrypted is not value:
+            logger.log(
+                level=log_levels.MODULE_DEBUG,
+                msg=f"Decrypting '{field}' for switch: {switch_model.mng_ip_address}",
+            )
+            updates[field] = decrypted
+    if updates:
+        return switch_model.model_copy(update=updates)
+    return switch_model
+
+
+def _decrypt_host_password(host_model: "HostModel") -> "HostModel":
+    """
+    Decrypt password fields for a HostModel.
+
+    Decrypts host-level `mng_password` and password-like values in
+    `connection_options` for all host connections.
+    """
+    has_connection_passwords = any(
+        connection.connection_options and any("password" in key.lower() for key in connection.connection_options)
+        for connection in (host_model.connections or [])
+    )
+    has_mng_password = isinstance(getattr(host_model, "mng_password", None), SecretStr)
+
+    if not has_connection_passwords and not has_mng_password:
+        if not host_model.connections:
+            logger.log(level=log_levels.MODULE_DEBUG, msg=f"No connections for host: {host_model.name}, skipping.")
+        return host_model
+
+    try:
+        cipher = _get_encryption_obj()
+    except PyTestMFDConfigException as e:
+        logger.log(level=log_levels.MODULE_DEBUG, msg=e)
+        return host_model
+
+    updates = {}
+    if has_mng_password:
+        mng_key = "mng_password"
+        mng_password = getattr(host_model, mng_key, None)
+        decrypted = _try_decrypt_secret(mng_password, cipher)
+        if decrypted is not mng_password:
+            logger.log(
+                level=log_levels.MODULE_DEBUG,
+                msg=f"Decrypting '{mng_key}' for host: {host_model.name}",
+            )
+            updates[mng_key] = decrypted
+
+    updated_connections = []
+    for connection in host_model.connections or []:
+        if not connection.connection_options:
+            updated_connections.append(connection)
+            continue
+        new_options = {}
+        for key, value in connection.connection_options.items():
+            if "password" in key.lower() and isinstance(value, SecretStr):
+                decrypted = _try_decrypt_secret(value, cipher)
+                if decrypted is not value:
+                    logger.log(
+                        level=log_levels.MODULE_DEBUG,
+                        msg=f"Decrypting '{key}' for host: {host_model.name}",
+                    )
+                new_options[key] = decrypted
+            else:
+                new_options[key] = value
+        updated_connections.append(connection.model_copy(update={"connection_options": new_options}))
+
+    if host_model.connections is not None:
+        updates["connections"] = updated_connections
+
+    if updates:
+        return host_model.model_copy(update=updates)
+    return host_model
+
+
+def _decrypt_model_password(model: Any, field_name: str = "password") -> Any:
+    """
+    Decrypt a password field in a model (e.g., PowerMngModel, OSDControllerModel).
+
+    If the field is a Fernet-encrypted SecretStr, it will be decrypted and
+    replaced with a new SecretStr containing plaintext.
+
+    :param model: Model object with a password field
+    :param field_name: Name of the password field (default: "password")
+    :return: Model with decrypted password field
+    """
+    password = getattr(model, field_name, None)
+    if password is None:
+        return model
+
+    try:
+        cipher = _get_encryption_obj()
+    except PyTestMFDConfigException as info:
+        logger.log(level=log_levels.MODULE_DEBUG, msg=info)
+        return model
+
+    decrypted = _try_decrypt_secret(password, cipher)
+    if decrypted is password:
+        return model
+
+    logger.log(level=log_levels.MODULE_DEBUG, msg=f"Decrypting '{field_name}' in {type(model).__name__}")
+    return model.model_copy(update={field_name: decrypted})
 
 
 """Test Config methods."""
@@ -538,54 +721,6 @@ def _get_secrets(test_config: dict) -> dict[str, SecretModel]:
     else:
         logger.log(level=log_levels.MODULE_DEBUG, msg="There is no 'secrets' key in test config file.")
         return {}
-
-
-def _decrypt_host_password(host_model: "HostModel") -> "HostModel":
-    """
-    Decrypt password fields in connection_options for all connections of a HostModel.
-
-    Any field containing 'password' in connection_options that is a Fernet-encrypted value
-    will be decrypted and replaced with a new SecretStr containing the plaintext.
-
-    :param host_model: HostModel object
-    :return: HostModel with decrypted password fields in connection_options
-    :raises PyTestMFDConfigException: If AMBER_ENCRYPTION_KEY is not set in environment variables
-    """
-    if not host_model.connections:
-        logger.log(level=log_levels.MODULE_DEBUG, msg=f"No connections for host: {host_model.name}, skipping.")
-        return host_model
-
-    try:
-        cipher = _get_encryption_obj()
-    except PyTestMFDConfigException:
-        return host_model
-
-    updated_connections = []
-    for connection in host_model.connections:
-        if not connection.connection_options:
-            updated_connections.append(connection)
-            continue
-        new_options = {}
-        for key, value in connection.connection_options.items():
-            if "password" in key.lower() and isinstance(value, SecretStr):
-                logger.log(
-                    level=log_levels.MODULE_DEBUG,
-                    msg=f"Trying to decrypt '{key}' in connection_options for host: {host_model.name}",
-                )
-                encrypted = value.get_secret_value().encode("utf-8")
-                try:
-                    decrypted = cipher.decrypt(encrypted).decode()
-                    new_options[key] = SecretStr(decrypted)
-                except InvalidToken:
-                    logger.log(
-                        level=log_levels.MODULE_DEBUG,
-                        msg=f"Value for '{key}' is not a valid Fernet token. Keeping original value.",
-                    )
-                    new_options[key] = value
-            else:
-                new_options[key] = value
-        updated_connections.append(connection.model_copy(update={"connection_options": new_options}))
-    return host_model.model_copy(update={"connections": updated_connections})
 
 
 def _get_encryption_obj() -> Fernet:
