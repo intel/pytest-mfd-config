@@ -101,6 +101,7 @@ All of them can be find in `pytest_mfd_config.fixtures.py` file.
 - `create_host_connections_from_model(host_model: HostModel) -> List[AsyncConnection]` - Prepare list of mfd-connect connections from model data.
 - `create_switch_from_model(switch_model: SwitchModel) -> Switch` - Prepare Switch object from model data.
 - `create_power_mng_from_model(power_mng_model: PowerMngModel) -> PowerManagement` - Prepare PowerManagement object from model data.
+- `create_osd_controller_from_model(osd_controller_model: OSDControllerModel) -> OsdController` - Prepare OSD controller object from model data.
 - `get_connection_object(connection_model: "ConnectionModel", connection_list: List["AsyncConnection"] = None, relative_connection: "AsyncConnection" = None,) -> "AsyncConnection"` - Prepare connection object from model data, relative connection is used for `SerialConnection`, connection_list or relative_connection must be passed in case of `SerialConnection`  
 
 #### How to instantiate Host / How to update `hosts` fixture dictionary? 
@@ -406,6 +407,13 @@ class PowerMngModel(BaseModel):
     community_string: Optional[str] = None
     outlet_number: Optional[int] = None
 ```  
+
+  #### PowerMng password decryption
+
+  Field `PowerMngModel.password` can be stored in encrypted form (Fernet). During Power Management object creation, this value is automatically decrypted using `AMBER_ENCRYPTION_KEY`.
+
+  Example of usage: `examples\topology_host_config_with_secrets.yaml`.
+
 #### Secrets
 Topology supports hiding secrets from logs. E.g. every model that inherits from MachineModel class has `mng_password` field, which is of type SecretStr.
 If printed, this field would be visible as `SecretStr("********")`, to get value use `get_secret_value()`
@@ -427,6 +435,12 @@ class OSDControllerModel(BaseModel):
     secured: bool | None = True
     proxies: Dict[str, str] | None = None
 ```
+
+  #### OSD password decryption
+
+  Field `OSDControllerModel.password` can be stored in encrypted form (Fernet). During OSD controller object creation, this value is automatically decrypted using `AMBER_ENCRYPTION_KEY`.
+
+  Example of usage: `examples\topology_host_config_with_secrets.yaml`.
 
 ### SwitchModel
 
@@ -452,6 +466,12 @@ switches:                                 # switches details needed for mfd-swit
   vlans: ['111', '112', '113']
 - (...)
 ```
+
+#### Switch password decryption
+
+Password fields (`mng_password`, `enable_password`) in `SwitchModel` can be stored in encrypted form (Fernet). During Switch object creation, decryption is attempted for password values represented as `SecretStr`, using the key from the `AMBER_ENCRYPTION_KEY` environment variable when it is available. If a value is not actually encrypted, or if `AMBER_ENCRYPTION_KEY` is missing, the original value is returned.
+
+Example of usage: `examples\topology_host_config_with_secrets.yaml`.
 
 ### ServiceModel
 - List of services like DHCP, NSX test automation may want to use during tests

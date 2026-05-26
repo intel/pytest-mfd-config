@@ -5,6 +5,8 @@
 import logging
 import os
 import re
+import sys
+import types
 
 from pydantic import SecretStr
 
@@ -17,16 +19,26 @@ from ruamel.yaml import YAML
 from pytest_mfd_config.exceptions import PyTestMFDConfigException
 from pytest_mfd_config.fixtures import (
     _get_connected_pairs,
+    _establish_connection,
+    hosts,
     log_extra_data_after_test,
+    create_switch_from_model,
     get_connection_object,
+    create_osd_controller_from_model,
+    create_power_mng_from_model,
+    _try_decrypt_secret,
     pass_parameters_from_config_file,
     parse_overwrite,
     _get_secrets,
     _get_encryption_obj,
     _decrypt_secrets,
     _decrypt_host_password,
+    _decrypt_switch_password,
+    _has_secret_switch_password_fields,
     create_host_from_model,
+    _decrypt_model_password,
 )
+from pytest_mfd_config.models.topology import SwitchModel
 from mfd_host import Host
 from pytest_mfd_config.models.test_config import HostPairConnectionModel, SecretModel
 from pytest_mfd_config.models.topology import ConnectionModel
@@ -365,9 +377,72 @@ class TestFixtures:
         result = _decrypt_host_password(host_model)
 
         decrypted_options = result.connections[0].connection_options
+        assert "password" in decrypted_options
         assert decrypted_options["password"].get_secret_value() == "plain_password"
         assert decrypted_options["jump_host_password"].get_secret_value() == "plain_jump_password"
         assert decrypted_options["timeout"] == 30
+        assert mock_cipher.decrypt.call_count == 2
+
+    def test__has_secret_switch_password_fields_no_secrets(self, mocker):
+        switch_model = mocker.Mock(spec=SwitchModel)
+        switch_model.mng_password = None
+        switch_model.enable_password = None
+        switch_model.mng_ip_address = "10.0.0.1"
+
+        assert _has_secret_switch_password_fields(switch_model) is False
+
+    def test__has_secret_switch_password_fields_mng_password(self, mocker):
+        switch_model = mocker.Mock(spec=SwitchModel)
+        switch_model.mng_password = SecretStr("encrypted")
+        switch_model.enable_password = None
+        switch_model.mng_ip_address = "10.0.0.1"
+
+        assert _has_secret_switch_password_fields(switch_model) is True
+
+    def test__has_secret_switch_password_fields_enable_password(self, mocker):
+        switch_model = mocker.Mock(spec=SwitchModel)
+        switch_model.mng_password = None
+        switch_model.enable_password = SecretStr("encrypted")
+        switch_model.mng_ip_address = "10.0.0.1"
+
+        assert _has_secret_switch_password_fields(switch_model) is True
+
+    def test__decrypt_switch_password_no_decryption_needed(self, mocker):
+        switch_model = mocker.Mock(spec=SwitchModel)
+        switch_model.mng_password = None
+        switch_model.enable_password = None
+        switch_model.mng_ip_address = "10.0.0.1"
+
+        get_encryption_obj = mocker.patch("pytest_mfd_config.fixtures._get_encryption_obj")
+
+        result = _decrypt_switch_password(switch_model)
+
+        assert result is switch_model
+        get_encryption_obj.assert_not_called()
+
+    def test__decrypt_switch_password_decrypts_both_fields(self, mocker):
+        class DummySwitch:
+            def __init__(self):
+                self.mng_password = SecretStr("encrypted_mng")
+                self.enable_password = SecretStr("encrypted_enable")
+                self.mng_ip_address = "10.0.0.1"
+
+            def model_copy(self, update):
+                obj = DummySwitch()
+                for k, v in update.items():
+                    setattr(obj, k, v)
+                return obj
+
+        switch_model = DummySwitch()
+
+        mock_cipher = mocker.Mock()
+        mock_cipher.decrypt.side_effect = [b"plain_mng", b"plain_enable"]
+        mocker.patch("pytest_mfd_config.fixtures._get_encryption_obj", return_value=mock_cipher)
+
+        result = _decrypt_switch_password(switch_model)
+
+        assert result.mng_password.get_secret_value() == "plain_mng"
+        assert result.enable_password.get_secret_value() == "plain_enable"
         assert mock_cipher.decrypt.call_count == 2
 
     def test__decrypt_host_password_invalid_token_keeps_original(self, mocker):
@@ -462,3 +537,301 @@ class TestFixtures:
 
         mock_host.refresh_network_interfaces.assert_called_once()
         assert result is mock_host
+
+    def test__decrypt_model_password_decrypts_power_mng_password(self, mocker):
+        class DummyPowerMng:
+            def __init__(self):
+                self.password = SecretStr("encrypted_password")
+
+            def model_copy(self, update):
+                obj = DummyPowerMng()
+                for k, v in update.items():
+                    setattr(obj, k, v)
+                return obj
+
+        power_mng_model = DummyPowerMng()
+
+        mock_cipher = mocker.Mock()
+        mock_cipher.decrypt.return_value = b"plain_password"
+        mocker.patch("pytest_mfd_config.fixtures._get_encryption_obj", return_value=mock_cipher)
+
+        result = _decrypt_model_password(power_mng_model, field_name="password")
+
+        assert result.password.get_secret_value() == "plain_password"
+        mock_cipher.decrypt.assert_called_once_with(b"encrypted_password")
+
+    def test__decrypt_model_password_without_power_mng_password(self, mocker):
+        class DummyPowerMng:
+            def __init__(self):
+                self.password = None
+
+        power_mng_model = DummyPowerMng()
+
+        get_encryption_obj = mocker.patch("pytest_mfd_config.fixtures._get_encryption_obj")
+        result = _decrypt_model_password(power_mng_model, field_name="password")
+
+        assert result is power_mng_model
+        get_encryption_obj.assert_not_called()
+
+    def test__decrypt_model_password_decrypts_osd_controller_password(self, mocker):
+        class DummyOSDController:
+            def __init__(self):
+                self.password = SecretStr("encrypted_password")
+
+            def model_copy(self, update):
+                obj = DummyOSDController()
+                for k, v in update.items():
+                    setattr(obj, k, v)
+                return obj
+
+        osd_controller_model = DummyOSDController()
+
+        mock_cipher = mocker.Mock()
+        mock_cipher.decrypt.return_value = b"plain_password"
+        mocker.patch("pytest_mfd_config.fixtures._get_encryption_obj", return_value=mock_cipher)
+
+        result = _decrypt_model_password(osd_controller_model, field_name="password")
+
+        assert result.password.get_secret_value() == "plain_password"
+        mock_cipher.decrypt.assert_called_once_with(b"encrypted_password")
+
+    def test__decrypt_model_password_without_osd_controller_password(self, mocker):
+        class DummyOSDController:
+            def __init__(self):
+                self.password = None
+
+        osd_controller_model = DummyOSDController()
+
+        get_encryption_obj = mocker.patch("pytest_mfd_config.fixtures._get_encryption_obj")
+        result = _decrypt_model_password(osd_controller_model, field_name="password")
+
+        assert result is osd_controller_model
+        get_encryption_obj.assert_not_called()
+
+    def test_create_osd_controller_from_model_uses_decrypted_password(self, mocker):
+        captured = {}
+
+        class DummyOsdController:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        dummy_osd_mod = types.ModuleType("mfd_osd_control")
+        dummy_osd_mod.OsdController = DummyOsdController
+        mocker.patch.dict(sys.modules, {"mfd_osd_control": dummy_osd_mod})
+
+        class DummyModel:
+            def dict(self):
+                return {
+                    "base_url": "http://osd",
+                    "username": "user",
+                    "password": SecretStr("plain_password"),
+                    "secured": True,
+                    "proxies": None,
+                }
+
+        model = DummyModel()
+        decrypt_mock = mocker.patch("pytest_mfd_config.fixtures._decrypt_model_password", return_value=model)
+
+        result = create_osd_controller_from_model(model)
+
+        assert isinstance(result, DummyOsdController)
+        decrypt_mock.assert_called_once_with(model, field_name="password")
+        assert captured["password"] == "plain_password"
+
+    def test_create_power_mng_from_model_uses_decrypted_password(self, mocker):
+        class DummyPowerMngClass:
+            def __init__(self, ip=None, password=None, **kwargs):
+                self.kwargs = {"ip": ip, "password": password, **kwargs}
+
+        class DummyPowerModel:
+            power_mng_type = "DummyPowerMngClass"
+            connection = None
+
+            def dict(self):
+                return {"power_mng_type": "DummyPowerMngClass", "ip": "10.0.0.2", "password": "plain_pass"}
+
+        dummy_pdu_mod = types.ModuleType("mfd_powermanagement.pdu")
+        dummy_pdu_mod.PDU = type("PDU", (), {})
+
+        dummy_power_mod = types.ModuleType("mfd_powermanagement")
+        dummy_power_mod.DummyPowerMngClass = DummyPowerMngClass
+        dummy_power_mod.pdu = dummy_pdu_mod
+
+        mocker.patch.dict(
+            sys.modules,
+            {
+                "mfd_powermanagement": dummy_power_mod,
+                "mfd_powermanagement.pdu": dummy_pdu_mod,
+            },
+        )
+        mocker.patch("pytest_mfd_config.fixtures._decrypt_model_password", return_value=DummyPowerModel())
+
+        result = create_power_mng_from_model(DummyPowerModel())
+
+        assert isinstance(result, DummyPowerMngClass)
+        assert result.kwargs["password"] == "plain_pass"
+
+    def test_try_decrypt_secret_returns_original_for_none(self, mocker):
+        cipher = mocker.Mock()
+
+        result = _try_decrypt_secret(None, cipher)
+
+        assert result is None
+
+    def test_decrypt_model_password_when_no_encryption_key_returns_model(self, mocker):
+        class DummyModel:
+            def __init__(self):
+                self.password = SecretStr("encrypted")
+
+        model = DummyModel()
+        mocker.patch("pytest_mfd_config.fixtures._get_encryption_obj", side_effect=PyTestMFDConfigException("no key"))
+
+        result = _decrypt_model_password(model, field_name="password")
+
+        assert result is model
+
+    def test_decrypt_switch_password_when_no_encryption_key_returns_original(self, mocker):
+        switch_model = mocker.Mock(spec=SwitchModel)
+        switch_model.mng_password = SecretStr("encrypted")
+        switch_model.enable_password = None
+        switch_model.mng_ip_address = "10.0.0.1"
+
+        mocker.patch("pytest_mfd_config.fixtures._get_encryption_obj", side_effect=PyTestMFDConfigException("no key"))
+
+        result = _decrypt_switch_password(switch_model)
+
+        assert result is switch_model
+
+    def test_create_switch_from_model_uses_decrypted_switch_model(self, mocker):
+        class DummySwitchConnection:
+            pass
+
+        class DummySwitchClass:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        dummy_mod = types.ModuleType("mfd_switchmanagement")
+        dummy_mod.SSHSwitchConnection = DummySwitchConnection
+        dummy_mod.CiscoAPIConnection = DummySwitchConnection
+        dummy_mod.DummySwitch = DummySwitchClass
+        mocker.patch.dict(sys.modules, {"mfd_switchmanagement": dummy_mod})
+
+        switch_model = mocker.Mock()
+        switch_model.connection_type = "SSHSwitchConnection"
+        switch_model.switch_type = "DummySwitch"
+        switch_model.mng_ip_address = "10.0.0.1"
+        switch_model.mng_user = "admin"
+        switch_model.mng_password = SecretStr("pass")
+        switch_model.enable_password = SecretStr("enable")
+        switch_model.ssh_key_file = None
+        switch_model.use_ssh_key = None
+        switch_model.device_type = None
+        switch_model.auth_timeout = None
+
+        decrypt_switch_mock = mocker.patch(
+            "pytest_mfd_config.fixtures._decrypt_switch_password", return_value=switch_model
+        )
+
+        result = create_switch_from_model(switch_model)
+
+        decrypt_switch_mock.assert_called_once_with(switch_model)
+        assert isinstance(result, DummySwitchClass)
+        assert result.kwargs["password"] == "pass"
+
+    def test_establish_connection_with_mac_uses_osd_controller_factory(self, mocker):
+        class DummyConnectionClass:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        dummy_connect_mod = types.ModuleType("mfd_connect")
+        dummy_connect_mod.RPyCConnection = DummyConnectionClass
+        dummy_connect_mod.util = types.SimpleNamespace(EFI_SHELL_PROMPT_REGEX="prompt")
+        mocker.patch.dict(sys.modules, {"mfd_connect": dummy_connect_mod})
+
+        osd_controller = mocker.Mock()
+        osd_controller.does_host_exist.return_value = True
+        osd_controller.get_host_ip.return_value = "10.10.10.10"
+        create_osd_mock = mocker.patch(
+            "pytest_mfd_config.fixtures.create_osd_controller_from_model", return_value=osd_controller
+        )
+
+        connection_model = ConnectionModel(
+            connection_type="RPyCConnection",
+            mac_address="aa:bb:cc:dd:ee:ff",
+            osd_details={"base_url": "http://osd"},
+            connection_options={"password": "secret"},
+        )
+        assert isinstance(connection_model.connection_options["password"], SecretStr)
+
+        result = _establish_connection(connection_model)
+
+        create_osd_mock.assert_called_once()
+        osd_controller.does_host_exist.assert_called_once_with("aa:bb:cc:dd:ee:ff")
+        osd_controller.get_host_ip.assert_called_once_with("aa:bb:cc:dd:ee:ff")
+        assert isinstance(result, DummyConnectionClass)
+        assert result.kwargs["ip"] == "10.10.10.10"
+        assert result.kwargs["password"] == "secret"
+
+    def test_establish_connection_with_mac_raises_if_host_missing(self, mocker):
+        class DummyConnectionClass:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        dummy_connect_mod = types.ModuleType("mfd_connect")
+        dummy_connect_mod.RPyCConnection = DummyConnectionClass
+        mocker.patch.dict(sys.modules, {"mfd_connect": dummy_connect_mod})
+
+        osd_controller = mocker.Mock()
+        osd_controller.does_host_exist.return_value = False
+        mocker.patch("pytest_mfd_config.fixtures.create_osd_controller_from_model", return_value=osd_controller)
+
+        connection_model = ConnectionModel(
+            connection_type="RPyCConnection",
+            mac_address="aa:bb:cc:dd:ee:ff",
+            osd_details={"base_url": "http://osd"},
+        )
+
+        with pytest.raises(PyTestMFDConfigException, match="Passed OSD Host does not exist"):
+            _establish_connection(connection_model)
+
+    def test_hosts_fixture_creates_only_instantiated_hosts(self, mocker):
+        topology_model = mocker.Mock()
+        host_a = mocker.Mock(name="host_a", instantiate=True)
+        host_a.name = "host-a"
+        host_b = mocker.Mock(name="host_b", instantiate=False)
+        topology_model.hosts = [host_a, host_b]
+
+        created_host = mocker.Mock()
+        created_host.name = "host-a"
+        create_host = mocker.patch("pytest_mfd_config.fixtures.create_host_from_model", return_value=created_host)
+
+        result = hosts.__wrapped__(topology_model)
+
+        assert result == {"host-a": created_host}
+        create_host.assert_called_once_with(host_model=host_a)
+
+    def test_decrypt_host_password_decrypts_mng_password_field(self, mocker):
+        class DummyHost:
+            def __init__(self):
+                self.name = "sut-1"
+                self.mng_password = SecretStr("enc_mng")
+                self.connections = None
+
+            def model_copy(self, update):
+                copied = DummyHost()
+                for k, v in update.items():
+                    setattr(copied, k, v)
+                return copied
+
+        host_model = DummyHost()
+        cipher = mocker.Mock()
+        mocker.patch("pytest_mfd_config.fixtures._get_encryption_obj", return_value=cipher)
+        mocker.patch(
+            "pytest_mfd_config.fixtures._try_decrypt_secret",
+            side_effect=lambda value, _c: SecretStr("plain_mng") if value is host_model.mng_password else value,
+        )
+
+        result = _decrypt_host_password(host_model)
+
+        assert isinstance(result.mng_password, SecretStr)
+        assert result.mng_password.get_secret_value() == "plain_mng"
