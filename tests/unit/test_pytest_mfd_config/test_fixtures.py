@@ -91,7 +91,7 @@ class TestFixtures:
             """
         )
         pytester.makepyfile(
-            """
+            test_extra_data_fixture="""
             def test_extra_data(extra_data):
                 assert extra_data == {}
             """
