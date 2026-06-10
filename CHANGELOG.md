@@ -2,6 +2,27 @@
 
 <!-- version list -->
 
+## v3.27.0 (2026-06-10)
+
+### Bug Fixes
+
+- Password decryption of connection_options for Host model
+  ([`380bb98`](https://github.com/intel/pytest-mfd-config/commit/380bb98759ec15259ed602a6f65553efdfc94eee))
+
+### Chores
+
+- Bump pytest and mfd-code-quality requirements
+  ([`fa18118`](https://github.com/intel/pytest-mfd-config/commit/fa18118e14a4f2422693f76d1ca22007414ff9ad))
+
+- Fix pyproject.toml after CI actions
+  ([`00346c5`](https://github.com/intel/pytest-mfd-config/commit/00346c5264bc82bd690dc349f54406fa34432b56))
+
+### Features
+
+- Decrypt passwords for topology objects (Switch, PowerMng, OSD)
+  ([`512c62e`](https://github.com/intel/pytest-mfd-config/commit/512c62e21100c99cab08a7d666153e71bd759442))
+
+
 ## v3.26.1 (2026-05-19)
 
 ### Bug Fixes
